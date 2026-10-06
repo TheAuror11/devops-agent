@@ -2,7 +2,7 @@
 
 Production-grade **AI DevOps / debugging agent for AWS** — an in-house replica of [AWS DevOps Agent](https://aws.amazon.com/devops-agent/): Agent Spaces, topology-aware multi-hypothesis investigation, RAG over runbooks, BYO MCP tool registry, operator web app, and ECS Fargate scale-out to **100+ concurrent investigations**.
 
-Architecture is documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Feature-by-feature mapping to AWS DevOps Agent is in [`docs/COMPARISON.md`](docs/COMPARISON.md).
+Architecture is documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Feature-by-feature mapping to AWS DevOps Agent is in [`docs/COMPARISON.md`](docs/COMPARISON.md). Low-level design patterns (Command, Observer, Factory, Strategy, Template Method) are in [`docs/LLD.md`](docs/LLD.md).
 
 ## What it does
 

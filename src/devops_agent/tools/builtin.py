@@ -73,7 +73,40 @@ def invoke_tool(spec: ToolSpec, arguments: dict[str, Any]) -> dict[str, Any]:
             return _err(spec.provider, spec.name, exc)
 
 
-def builtin_tools() -> list[ToolSpec]:
+def builtin_tools(agent_space_id: str | None = None) -> list[ToolSpec]:
+    """Factory for the read-only AWS / RAG / topology tool surface.
+
+    `agent_space_id` is bound into topology walks (Adapter) so investigations
+    stay scoped to their Agent Space.
+    """
+    space_id = agent_space_id
+
+    def walk_handler(args: dict[str, Any]) -> dict[str, Any]:
+        from devops_agent.topology.graph import walk
+
+        return walk(
+            args.get("node_name", ""),
+            int(args.get("depth", 2)),
+            space_id=space_id,
+        )
+
+    def retrieve_handler(args: dict[str, Any]) -> dict[str, Any]:
+        from devops_agent.rag import get_retrieval_strategy
+
+        hits = get_retrieval_strategy().search(args.get("query", ""), k=int(args.get("k", 4)))
+        return {
+            "chunks": [
+                {
+                    "title": h.title,
+                    "path": h.path,
+                    "score": round(h.score, 3),
+                    "text": h.text[:1200],
+                    "tags": h.tags,
+                }
+                for h in hits
+            ]
+        }
+
     return [
         ToolSpec(
             name="list_alarms",
@@ -170,7 +203,7 @@ def builtin_tools() -> list[ToolSpec]:
                 },
                 "required": ["node_name"],
             },
-            handler=_walk_topology,
+            handler=walk_handler,
             provider="topology",
         ),
         ToolSpec(
@@ -184,7 +217,7 @@ def builtin_tools() -> list[ToolSpec]:
                 },
                 "required": ["query"],
             },
-            handler=_retrieve_runbooks,
+            handler=retrieve_handler,
             provider="runbooks",
         ),
     ]
@@ -227,30 +260,6 @@ def _deployments(args: dict[str, Any]) -> dict[str, Any]:
 
 def _describe(args: dict[str, Any]) -> dict[str, Any]:
     return telemetry.describe_resource(args.get("kind", ""), args.get("name", ""))
-
-
-def _walk_topology(args: dict[str, Any]) -> dict[str, Any]:
-    from devops_agent.topology.graph import walk
-
-    return walk(args.get("node_name", ""), int(args.get("depth", 2)))
-
-
-def _retrieve_runbooks(args: dict[str, Any]) -> dict[str, Any]:
-    from devops_agent.rag import get_runbook_index
-
-    hits = get_runbook_index().search(args.get("query", ""), k=int(args.get("k", 4)))
-    return {
-        "chunks": [
-            {
-                "title": h.title,
-                "path": h.path,
-                "score": round(h.score, 3),
-                "text": h.text[:1200],
-                "tags": h.tags,
-            }
-            for h in hits
-        ]
-    }
 
 
 def _live_alarms(state: str) -> list[dict[str, Any]] | None:

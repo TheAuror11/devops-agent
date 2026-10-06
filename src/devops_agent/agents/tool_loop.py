@@ -1,67 +1,48 @@
 from __future__ import annotations
 
-from typing import Any, Protocol
+from collections.abc import Callable
+from typing import Any
 
-from devops_agent.agents.local_reasoner import execute_named_tool
+from devops_agent.agents.reasoner import Reasoner, get_reasoner
 from devops_agent.config import settings
-from devops_agent.mcp.registry import McpRegistry, RegisteredTool
 from devops_agent.observability import get_logger
-from devops_agent.resilience.circuit_breaker import CircuitOpenError
-from devops_agent.tools.builtin import ToolSpec, invoke_tool
 
 log = get_logger("tool_loop")
 
 MAX_RESULT_CHARS = 12_000
 
 
-class Reasoner(Protocol):
-    def converse(
-        self,
-        messages: list[dict[str, Any]],
-        system: str,
-        tools: list[dict[str, Any]] | None = None,
-    ) -> dict[str, Any]: ...
-
-
-def get_reasoner() -> Reasoner:
-    if settings.use_bedrock:
-        from devops_agent.agents.bedrock_client import BedrockConverse
-
-        return BedrockConverse()
-    from devops_agent.agents.local_reasoner import LocalReasoner
-
-    return LocalReasoner()
-
-
 class ToolLoop:
+    """Bedrock-shaped tool-use loop over a ToolRegistry (or legacy specs)."""
+
     def __init__(
         self,
-        specs: list[ToolSpec],
-        mcp_tools: list[RegisteredTool] | None = None,
-        mcp_registry: McpRegistry | None = None,
+        *,
+        registry: Any | None = None,
+        specs: list[Any] | None = None,
+        mcp_tools: list[Any] | None = None,
+        mcp_registry: Any | None = None,
         mcp_server_ids: list[str] | None = None,
-        on_event: Any | None = None,
+        reasoner: Reasoner | None = None,
+        on_event: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> None:
-        self.specs = specs
-        self.mcp_tools = mcp_tools or []
-        self.mcp_registry = mcp_registry
-        self.mcp_server_ids = mcp_server_ids or []
+        if registry is not None:
+            self.registry = registry
+        else:
+            # Legacy Adapter: wrap old constructor args into a ToolRegistry.
+            from devops_agent.tools.registry import ToolRegistry
+
+            self.registry = ToolRegistry(
+                specs=list(specs or []),
+                mcp_tools=list(mcp_tools or []),
+                mcp_registry=mcp_registry,
+                mcp_server_ids=mcp_server_ids or [],
+            )
+        self.reasoner = reasoner or get_reasoner()
         self.on_event = on_event
-        self.reasoner = get_reasoner()
 
     def bedrock_tools(self) -> list[dict[str, Any]]:
-        tools = [s.bedrock_spec() for s in self.specs]
-        for t in self.mcp_tools:
-            tools.append(
-                {
-                    "toolSpec": {
-                        "name": t.bedrock_name,
-                        "description": f"[MCP:{t.server_name}] {t.description}",
-                        "inputSchema": {"json": t.input_schema or {"type": "object"}},
-                    }
-                }
-            )
-        return tools
+        return self.registry.bedrock_tools()
 
     def run(self, system: str, user: str, max_rounds: int | None = None) -> str:
         max_rounds = max_rounds or settings.bedrock_max_tool_rounds
@@ -85,7 +66,7 @@ class ToolLoop:
                 if "toolUse" not in block:
                     continue
                 tu = block["toolUse"]
-                result = self._dispatch(tu["name"], tu.get("input") or {})
+                result = self.registry.dispatch(tu["name"], tu.get("input") or {})
                 clipped = _clip(result)
                 if self.on_event:
                     self.on_event(
@@ -102,21 +83,6 @@ class ToolLoop:
                 )
             messages.append({"role": "user", "content": tool_results})
         return final or "Investigation stopped after max tool rounds."
-
-    def _dispatch(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        for spec in self.specs:
-            if spec.name == name:
-                return invoke_tool(spec, arguments)
-        if name.startswith("mcp_") and self.mcp_registry:
-            try:
-                result = self.mcp_registry.call(name, arguments, self.mcp_server_ids)
-                return result if isinstance(result, dict) else {"result": result}
-            except CircuitOpenError as exc:
-                return {"error": str(exc), "degraded": True}
-            except Exception as exc:  # noqa: BLE001
-                log.exception("mcp_tool_failed", tool=name)
-                return {"error": str(exc), "degraded": True}
-        return execute_named_tool(self.specs, name, arguments)
 
 
 def _extract_text(message: dict[str, Any]) -> str:
