@@ -98,16 +98,20 @@ Demo server: `devops_agent.mcp.demo_server` (`query_apm_latency`, `query_error_b
 
 ## Scale: 100+ concurrent investigations
 
+See [`SCALING.md`](SCALING.md) for the full system design. Summary:
+
 | Concern | Design |
 |---------|--------|
 | Ingress burst | API is stateless; `POST /v1/investigations` returns 202 and enqueues |
-| Queue | SQS standard (or FIFO with `MessageGroupId=agent_space_id`). Visibility 15 min (investigations run 5–8 min) |
-| Poison | DLQ after 5 receives |
-| Exactly-once work | SQS is at-least-once. Worker `claim("process:{id}")` in the idempotency store before orchestrating; completed keys no-op retries |
-| Duplicate creates | API `claim("create:{idempotency_key}")` |
-| Horizontal scale | Fargate workers `min 4 / max 40`, concurrency 4/task → ~160 in-flight. Step-scale on `ApproximateNumberOfMessagesVisible` |
-| Isolation | One investigation per handler invocation; no shared in-process model cache across spaces |
-| Degraded providers | Circuit breaker skips CloudWatch/MCP/GitHub independently |
+| Backpressure | 429 rate limit / 503 when queue depth or oldest-message age exceeds SLO |
+| Queue | SQS **standard** by default (max throughput). Optional FIFO for per-space ordering |
+| Poison | DLQ after 5 receives + CloudWatch alarm; worker forces visibility 0 (does not delete poison) |
+| Exactly-once work | DynamoDB conditional lease `process:{id}` in prod; in-memory locally |
+| Duplicate creates | API `claim("create:{idempotency_key}")` (DynamoDB-backed in prod) |
+| Horizontal scale | Fargate workers `min 4 / max 40` × `ThreadPool(WORKER_CONCURRENCY)` → ~160 in-flight. Scale on depth **and** oldest age |
+| Long jobs | Visibility heartbeat every 300s while orchestrator runs |
+| Bulkheads | Semaphores on Bedrock and tool/MCP calls per task |
+| Isolation | Per-investigation handler; circuit breakers per provider |
 
 ## Persistence
 

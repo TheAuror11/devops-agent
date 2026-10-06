@@ -17,9 +17,14 @@ class QueueMessage:
 
 class InvestigationQueue(Protocol):
     def enqueue(self, body: dict[str, Any], dedup_id: str | None = None) -> str: ...
+
     def receive(self, max_messages: int = 1, wait_seconds: int = 5) -> list[QueueMessage]: ...
+
     def delete(self, receipt_handle: str) -> None: ...
+
     def change_visibility(self, receipt_handle: str, seconds: int) -> None: ...
+
+    def attributes(self) -> dict[str, Any]: ...
 
 
 class InMemoryQueue:
@@ -62,6 +67,13 @@ class InMemoryQueue:
     def change_visibility(self, receipt_handle: str, seconds: int) -> None:
         return None
 
+    def attributes(self) -> dict[str, Any]:
+        return {
+            "ApproximateNumberOfMessages": self._q.qsize(),
+            "ApproximateNumberOfMessagesNotVisible": len(self._inflight),
+            "ApproximateAgeOfOldestMessage": 0,
+        }
+
 
 class SqsQueue:
     def __init__(self, queue_url: str, client: Any = None) -> None:
@@ -71,6 +83,8 @@ class SqsQueue:
 
         self.queue_url = queue_url
         self.client = client or boto3.client("sqs", region_name=settings.aws_region)
+        self.is_fifo = settings.sqs_is_fifo or queue_url.endswith(".fifo")
+        self.visibility_timeout = settings.sqs_visibility_timeout_seconds
 
     def enqueue(self, body: dict[str, Any], dedup_id: str | None = None) -> str:
         kwargs: dict[str, Any] = {
@@ -80,10 +94,15 @@ class SqsQueue:
                 "investigation_id": {
                     "DataType": "String",
                     "StringValue": str(body.get("investigation_id", "")),
-                }
+                },
+                "agent_space_id": {
+                    "DataType": "String",
+                    "StringValue": str(body.get("agent_space_id", "")),
+                },
             },
         }
-        if dedup_id:
+        # FIFO-only fields — never send on standard queues.
+        if self.is_fifo and dedup_id:
             kwargs["MessageDeduplicationId"] = dedup_id
             kwargs["MessageGroupId"] = str(body.get("agent_space_id") or "default")
         resp = self.client.send_message(**kwargs)
@@ -94,7 +113,7 @@ class SqsQueue:
             QueueUrl=self.queue_url,
             MaxNumberOfMessages=min(max_messages, 10),
             WaitTimeSeconds=wait_seconds,
-            VisibilityTimeout=900,
+            VisibilityTimeout=self.visibility_timeout,
             AttributeNames=["ApproximateReceiveCount"],
             MessageAttributeNames=["All"],
         )
@@ -105,7 +124,9 @@ class SqsQueue:
                     body=json.loads(m["Body"]),
                     receipt_handle=m["ReceiptHandle"],
                     message_id=m["MessageId"],
-                    approximate_receive_count=int(m.get("Attributes", {}).get("ApproximateReceiveCount", "1")),
+                    approximate_receive_count=int(
+                        m.get("Attributes", {}).get("ApproximateReceiveCount", "1")
+                    ),
                 )
             )
         return out
@@ -117,3 +138,14 @@ class SqsQueue:
         self.client.change_message_visibility(
             QueueUrl=self.queue_url, ReceiptHandle=receipt_handle, VisibilityTimeout=seconds
         )
+
+    def attributes(self) -> dict[str, Any]:
+        resp = self.client.get_queue_attributes(
+            QueueUrl=self.queue_url,
+            AttributeNames=[
+                "ApproximateNumberOfMessages",
+                "ApproximateNumberOfMessagesNotVisible",
+                "ApproximateAgeOfOldestMessage",
+            ],
+        )
+        return resp.get("Attributes", {})

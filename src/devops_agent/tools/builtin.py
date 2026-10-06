@@ -53,6 +53,8 @@ def _err(provider: str, name: str, exc: Exception) -> dict[str, Any]:
 
 
 def invoke_tool(spec: ToolSpec, arguments: dict[str, Any]) -> dict[str, Any]:
+    from devops_agent.scaling.bulkhead import tool_slot
+
     cb = get_circuit_registry()
     if not cb.allow(spec.provider):
         TOOL_CALLS.labels(tool=spec.name, status="circuit_open").inc()
@@ -61,16 +63,21 @@ def invoke_tool(spec: ToolSpec, arguments: dict[str, Any]) -> dict[str, Any]:
             "degraded": True,
             "provider": spec.provider,
         }
-    with TOOL_LATENCY.labels(tool=spec.name).time():
-        try:
-            result = spec.handler(arguments or {})
-            log.info("tool_ok", tool=spec.name, provider=spec.provider)
-            return _ok(spec.provider, spec.name, result)
-        except CircuitOpenError as exc:
-            return {"error": str(exc), "degraded": True, "provider": spec.provider}
-        except Exception as exc:  # noqa: BLE001 — tools must never crash the agent loop
-            log.exception("tool_failed", tool=spec.name)
-            return _err(spec.provider, spec.name, exc)
+    try:
+        with tool_slot():
+            with TOOL_LATENCY.labels(tool=spec.name).time():
+                try:
+                    result = spec.handler(arguments or {})
+                    log.info("tool_ok", tool=spec.name, provider=spec.provider)
+                    return _ok(spec.provider, spec.name, result)
+                except CircuitOpenError as exc:
+                    return {"error": str(exc), "degraded": True, "provider": spec.provider}
+                except Exception as exc:  # noqa: BLE001 — tools must never crash the agent loop
+                    log.exception("tool_failed", tool=spec.name)
+                    return _err(spec.provider, spec.name, exc)
+    except TimeoutError:
+        TOOL_CALLS.labels(tool=spec.name, status="bulkhead").inc()
+        return {"error": "tool bulkhead saturated", "degraded": True, "provider": spec.provider}
 
 
 def builtin_tools(agent_space_id: str | None = None) -> list[ToolSpec]:

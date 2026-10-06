@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from devops_agent.config import settings
 from devops_agent.observability import BEDROCK_CALLS, get_logger
+from devops_agent.scaling.bulkhead import bedrock_slot
 
 log = get_logger("bedrock")
 
@@ -39,7 +41,29 @@ class BedrockConverse:
         }
         if tools:
             kwargs["toolConfig"] = {"tools": tools, "toolChoice": {"auto": {}}}
-        resp = self.client.converse(**kwargs)
-        BEDROCK_CALLS.labels(stop_reason=resp.get("stopReason", "unknown")).inc()
-        log.info("bedrock_converse", stop_reason=resp.get("stopReason"), model=self.model_id)
-        return resp
+
+        last_exc: Exception | None = None
+        with bedrock_slot():
+            for attempt in range(settings.bedrock_max_retries + 1):
+                try:
+                    resp = self.client.converse(**kwargs)
+                    BEDROCK_CALLS.labels(stop_reason=resp.get("stopReason", "unknown")).inc()
+                    log.info(
+                        "bedrock_converse",
+                        stop_reason=resp.get("stopReason"),
+                        model=self.model_id,
+                        attempt=attempt,
+                    )
+                    return resp
+                except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
+                    name = type(exc).__name__
+                    msg = str(exc)
+                    throttled = "Throttl" in name or "TooManyRequests" in msg or "throttl" in msg.lower()
+                    if not throttled or attempt >= settings.bedrock_max_retries:
+                        raise
+                    sleep_s = min(2**attempt, 30)
+                    log.warning("bedrock_throttle_retry", attempt=attempt, sleep_s=sleep_s)
+                    time.sleep(sleep_s)
+        assert last_exc is not None
+        raise last_exc

@@ -27,10 +27,11 @@ from devops_agent.domain.models import (
     Skill,
     utcnow,
 )
-from devops_agent.observability import INVESTIGATIONS_STARTED, get_logger
+from devops_agent.observability import BACKPRESSURE_REJECTS, INVESTIGATIONS_STARTED, get_logger
 from devops_agent.rag import refresh_runbook_index
 from devops_agent.resilience.circuit_breaker import get_circuit_registry
 from devops_agent.runtime import get_queue
+from devops_agent.scaling.backpressure import assess_queue_pressure, get_rate_limiter
 
 log = get_logger("api")
 router = APIRouter(prefix="/v1")
@@ -38,6 +39,7 @@ router = APIRouter(prefix="/v1")
 
 @router.get("/health")
 def health() -> dict[str, Any]:
+    pressure = assess_queue_pressure(get_queue())
     return {
         "status": "ok",
         "env": settings.app_env,
@@ -45,6 +47,10 @@ def health() -> dict[str, Any]:
         "store": settings.store_backend,
         "queue": settings.queue_backend,
         "circuits": get_circuit_registry().snapshot(),
+        "queue_depth": pressure.visible,
+        "queue_in_flight": pressure.in_flight,
+        "queue_oldest_age_seconds": pressure.oldest_age_seconds,
+        "worker_concurrency": settings.worker_concurrency,
     }
 
 
@@ -107,6 +113,25 @@ def create_skill(space_id: str, body: CreateSkillRequest, store: StoreDep, _: Au
     )
 
 
+def _enforce_ingress_limits(space_id: str) -> None:
+    """Backpressure + rate limit before accepting new investigations."""
+    if not get_rate_limiter().allow(space_id or "global"):
+        BACKPRESSURE_REJECTS.labels(reason="rate_limit").inc()
+        raise HTTPException(
+            status_code=429,
+            detail="investigation rate limit exceeded",
+            headers={"Retry-After": "30"},
+        )
+    pressure = assess_queue_pressure(get_queue())
+    if pressure.overloaded:
+        BACKPRESSURE_REJECTS.labels(reason="queue_pressure").inc()
+        raise HTTPException(
+            status_code=503,
+            detail=f"system overloaded: {pressure.reason}",
+            headers={"Retry-After": "60"},
+        )
+
+
 @router.post("/investigations", status_code=202)
 def create_investigation(
     body: CreateInvestigationRequest,
@@ -116,6 +141,7 @@ def create_investigation(
 ) -> Investigation:
     if not store.get_agent_space(body.agent_space_id):
         raise HTTPException(404, "agent space not found")
+    _enforce_ingress_limits(body.agent_space_id)
     key = body.idempotency_key or f"inv:{body.agent_space_id}:{body.title}:{body.description[:80]}"
     create_key = f"create:{key}"
     existing = idem.get(create_key)

@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     bedrock_max_tokens: int = 4096
     bedrock_temperature: float = 0.1
     bedrock_max_tool_rounds: int = 12
+    bedrock_max_inflight_per_task: int = 2
+    bedrock_slot_timeout_seconds: float = 120.0
+    bedrock_max_retries: int = 4
 
     store_backend: Literal["local", "dynamodb"] = "local"
     data_dir: str = "./data"
@@ -31,7 +34,18 @@ class Settings(BaseSettings):
     sqs_investigation_queue_url: str = ""
     sqs_dlq_url: str = ""
     sqs_wait_time_seconds: int = 20
+    sqs_is_fifo: bool = False
+    sqs_visibility_timeout_seconds: int = 900
     worker_concurrency: int = 4
+    visibility_heartbeat_seconds: int = 300
+    graceful_shutdown_seconds: int = 120
+
+    # Ingress backpressure (0 = disabled)
+    max_queue_depth: int = 500
+    max_queue_age_seconds: int = 900
+    max_investigations_per_minute: int = 120
+
+    tool_max_inflight_per_task: int = 8
 
     ddb_table_prefix: str = "devops-agent"
     opensearch_endpoint: str = ""

@@ -7,16 +7,23 @@ from devops_agent.agents.orchestrator import InvestigationOrchestrator
 from devops_agent.domain.models import InvestigationStatus
 from devops_agent.observability import QUEUE_IN_FLIGHT, get_logger, investigation_id_var
 from devops_agent.persistence.protocol import Store
-from devops_agent.queueing import QueueMessage
-from devops_agent.resilience.idempotency import IdempotencyStore
+from devops_agent.queueing import InvestigationQueue, QueueMessage
+from devops_agent.resilience.idempotency import IdempotencyBackend
+from devops_agent.worker.heartbeat import VisibilityHeartbeat
 
 log = get_logger("worker.handler")
 
 
 class InvestigationHandler:
-    def __init__(self, store: Store, idem: IdempotencyStore) -> None:
+    def __init__(
+        self,
+        store: Store,
+        idem: IdempotencyBackend,
+        queue: InvestigationQueue | None = None,
+    ) -> None:
         self.store = store
         self.idem = idem
+        self.queue = queue
         self.orch = InvestigationOrchestrator(store)
         self.owner = f"{socket.gethostname()}:{os.getpid()}"
 
@@ -43,6 +50,15 @@ class InvestigationHandler:
                 return
             log.info("already_in_flight", investigation_id=inv_id)
             return
+
+        heartbeat: VisibilityHeartbeat | None = None
+        if self.queue is not None:
+            heartbeat = VisibilityHeartbeat(
+                message.receipt_handle,
+                extend=self.queue.change_visibility,
+            )
+            heartbeat.start()
+
         QUEUE_IN_FLIGHT.inc()
         try:
             inv = self.store.get_investigation(inv_id)
@@ -55,5 +71,7 @@ class InvestigationHandler:
             self.orch.run(inv_id)
             self.idem.complete(key)
         finally:
+            if heartbeat:
+                heartbeat.stop()
             QUEUE_IN_FLIGHT.dec()
             investigation_id_var.set("")

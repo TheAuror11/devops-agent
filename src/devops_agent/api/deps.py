@@ -7,15 +7,15 @@ from fastapi import Depends, Header, HTTPException
 from devops_agent.config import settings
 from devops_agent.persistence import get_store
 from devops_agent.persistence.protocol import Store
-from devops_agent.resilience.idempotency import IdempotencyStore
+from devops_agent.resilience.idempotency import IdempotencyBackend, build_idempotency_store
 
-_idem: IdempotencyStore | None = None
+_idem: IdempotencyBackend | None = None
 
 
-def get_idempotency() -> IdempotencyStore:
+def get_idempotency() -> IdempotencyBackend:
     global _idem
     if _idem is None:
-        _idem = IdempotencyStore(settings.idempotency_ttl_seconds)
+        _idem = build_idempotency_store(settings.idempotency_ttl_seconds)
     return _idem
 
 
@@ -29,4 +29,4 @@ def require_api_key(x_api_key: Annotated[str | None, Header()] = None) -> str:
 
 StoreDep = Annotated[Store, Depends(get_store)]
 AuthDep = Annotated[str, Depends(require_api_key)]
-IdemDep = Annotated[IdempotencyStore, Depends(get_idempotency)]
+IdemDep = Annotated[IdempotencyBackend, Depends(get_idempotency)]

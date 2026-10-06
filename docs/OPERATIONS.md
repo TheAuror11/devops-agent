@@ -30,9 +30,10 @@ docker compose up --build
 ### Worker capacity math
 
 - Investigation duration ≈ 5–8 minutes with Bedrock, ~seconds with the local reasoner.  
-- SQS visibility timeout = 15 minutes.  
-- `desired worker tasks × WORKER_CONCURRENCY` ≥ peak concurrent investigations.  
-- Default CDK: 4–40 tasks × 4 = **16–160** concurrent. Scale `max_capacity` for larger fleets.
+- SQS visibility timeout = 15 minutes; heartbeat every 300s extends leases mid-run.  
+- `desired worker tasks × WORKER_CONCURRENCY` ≥ peak concurrent investigations (true thread-pool parallelism).  
+- Default CDK: 4–40 tasks × 4 = **16–160** concurrent. Scales on queue **depth** and **oldest age**.  
+- Full system design: [`SCALING.md`](SCALING.md).
 
 ### Failure modes
 

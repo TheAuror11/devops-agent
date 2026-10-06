@@ -77,7 +77,33 @@ def metrics() -> Response:
 
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
+    """Liveness — process is up. Used by ALB / ECS."""
     return {"status": "ok"}
+
+
+@app.get("/readyz")
+def readyz() -> JSONResponse:
+    """Readiness — dependencies are reachable before taking traffic."""
+    checks: dict[str, str] = {"api": "ok"}
+    ok = True
+    try:
+        from devops_agent.persistence import get_store
+
+        get_store().list_agent_spaces()
+        checks["store"] = "ok"
+    except Exception as exc:  # noqa: BLE001
+        checks["store"] = f"error:{exc}"
+        ok = False
+    try:
+        from devops_agent.runtime import get_queue
+
+        get_queue().attributes()
+        checks["queue"] = "ok"
+    except Exception as exc:  # noqa: BLE001
+        checks["queue"] = f"error:{exc}"
+        ok = False
+    status = 200 if ok else 503
+    return JSONResponse({"status": "ready" if ok else "not_ready", "checks": checks}, status_code=status)
 
 
 if WEB_DIST.exists():

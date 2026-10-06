@@ -33,6 +33,11 @@ BEDROCK_CALLS = Counter("devops_agent_bedrock_calls_total", "Bedrock converse ca
 CIRCUIT_STATE = Gauge("devops_agent_circuit_open", "Circuit breaker open (1) or closed (0)", ["provider"])
 ACTIVE_INVESTIGATIONS = Gauge("devops_agent_active_investigations", "In-flight investigations on this worker")
 QUEUE_IN_FLIGHT = Gauge("devops_agent_queue_in_flight", "Messages currently being processed")
+QUEUE_DEPTH = Gauge("devops_agent_queue_depth", "Approximate visible SQS messages")
+QUEUE_OLDEST_AGE = Gauge("devops_agent_queue_oldest_age_seconds", "Age of oldest visible SQS message")
+BACKPRESSURE_REJECTS = Counter(
+    "devops_agent_backpressure_rejects_total", "Investigations rejected by backpressure/rate limit", ["reason"]
+)
 
 
 def new_correlation_id() -> str:
