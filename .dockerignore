@@ -1,0 +1,10 @@
+.venv
+data
+apps/web/node_modules
+apps/web/dist
+.git
+infra/cdk/cdk.out
+**/*.pyc
+**/__pycache__
+.pytest_cache
+.env

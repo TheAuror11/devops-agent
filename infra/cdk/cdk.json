@@ -1,0 +1,7 @@
+{
+  "app": "app.py",
+  "watch": ["app.py", "stack.py"],
+  "context": {
+    "@aws-cdk/aws-ecs-patterns:removeDefaultDesiredCount": true
+  }
+}

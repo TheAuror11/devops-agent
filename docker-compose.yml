@@ -1,0 +1,50 @@
+services:
+  api:
+    build:
+      context: .
+      target: api
+    environment:
+      APP_ENV: local
+      STORE_BACKEND: local
+      QUEUE_BACKEND: local
+      SEED_DEMO_DATA: "true"
+      DATA_DIR: /data
+      API_CORS_ORIGINS: http://localhost:8080,http://localhost:5173,http://localhost
+    volumes:
+      - agent-data:/data
+    ports:
+      - "8080:8080"
+    depends_on:
+      - mcp
+
+  worker:
+    build:
+      context: .
+      target: worker
+    environment:
+      APP_ENV: local
+      STORE_BACKEND: local
+      QUEUE_BACKEND: local
+      DATA_DIR: /data
+    volumes:
+      - agent-data:/data
+    profiles: ["split-worker"]
+
+  mcp:
+    build:
+      context: .
+      target: mcp
+    ports:
+      - "8090:8090"
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+
+volumes:
+  agent-data:

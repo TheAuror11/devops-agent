@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "devops-agent"
+version = "1.0.0"
+description = "Production-grade AI DevOps / debugging agent for AWS — Bedrock tool-calling, RAG runbooks, MCP registry, ECS Fargate scale-out."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [{ name = "DevOps Agent Engineering" }]
+keywords = ["aws", "bedrock", "devops", "sre", "incident-response", "mcp", "rag"]
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+  "pydantic>=2.9.0",
+  "pydantic-settings>=2.6.0",
+  "boto3>=1.35.0",
+  "botocore>=1.35.0",
+  "httpx>=0.27.0",
+  "structlog>=24.4.0",
+  "tenacity>=9.0.0",
+  "orjson>=3.10.0",
+  "python-multipart>=0.0.12",
+  "sse-starlette>=2.1.0",
+  "prometheus-client>=0.21.0",
+  "rank-bm25>=0.2.2",
+  "python-jose[cryptography]>=3.3.0",
+  "opentelemetry-api>=1.27.0",
+  "opentelemetry-sdk>=1.27.0",
+  "opentelemetry-instrumentation-fastapi>=0.48b0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.24.0",
+  "ruff>=0.7.0",
+  "mypy>=1.13.0",
+  "httpx>=0.27.0",
+]
+cdk = [
+  "aws-cdk-lib>=2.170.0",
+  "constructs>=10.4.0",
+]
+
+[project.scripts]
+devops-agent-api = "devops_agent.api.app:run"
+devops-agent-worker = "devops_agent.worker.main:run"
+devops-agent-mcp-demo = "devops_agent.mcp.demo_server:run"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+devops_agent = ["py.typed"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+ignore_missing_imports = true
+packages = ["devops_agent"]
